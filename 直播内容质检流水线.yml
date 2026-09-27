@@ -1,0 +1,597 @@
+app:
+  name: 直播内容智能质检流水线
+  description: '秋招项目：直播/短视频内容智能质检。输入直播转写稿，先做切句分块，再用并发迭代逐块「抽取车系+判定违规0-4」，随后用代码做确定性后处理（屏蔽词正则过滤 + 车系归一化去重 + 统计），输出结构化质检报告。设计范式：LLM识别 + 代码后处理职责分离、迭代并发(is_parallel)提速、失败隔离(remove-abnormal-output)不拖垮整批。注意：样例数据与屏蔽词表均为演示用，不引用任何公司资产。'
+  mode: workflow
+  icon: 🛡️
+  icon_background: '#DBEAFE'
+  use_icon_as_answer_icon: false
+kind: app
+version: 0.1.5
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        image_file_size_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        sourceType: start
+        targetType: code
+      id: start-source-split-target
+      source: '1801000000001'
+      sourceHandle: source
+      target: '1801000000002'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: code
+        targetType: iteration
+      id: split-source-iteration-target
+      source: '1801000000002'
+      sourceHandle: source
+      target: '1801000000003'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1801000000003'
+        sourceType: iteration-start
+        targetType: llm
+      id: iterstart-source-llm-target
+      source: '1801000000003start'
+      sourceHandle: source
+      target: '1801000000004'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1801000000003'
+        sourceType: llm
+        targetType: code
+      id: llm-source-parse-target
+      source: '1801000000004'
+      sourceHandle: source
+      target: '1801000000005'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: false
+        sourceType: iteration
+        targetType: code
+      id: iteration-source-keyword-target
+      source: '1801000000003'
+      sourceHandle: source
+      target: '1801000000006'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: code
+        targetType: code
+      id: keyword-source-merge-target
+      source: '1801000000006'
+      sourceHandle: source
+      target: '1801000000007'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: code
+        targetType: end
+      id: merge-source-end-target
+      source: '1801000000007'
+      sourceHandle: source
+      target: '1801000000008'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        desc: ''
+        selected: false
+        title: 开始
+        type: start
+        variables:
+        - label: 直播转写稿（口播/字幕文本）
+          options: []
+          required: true
+          type: paragraph
+          variable: transcript
+      height: 150
+      id: '1801000000001'
+      position:
+        x: 30
+        y: 250
+      positionAbsolute:
+        x: 30
+        y: 250
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        code: |-
+          def main(transcript: str) -> dict:
+              text = transcript or ""
+              size = 1000
+              overlap = 80
+              if not text:
+                  return {"blocks": []}
+              if len(text) <= size:
+                  blocks = [text]
+              else:
+                  blocks = []
+                  step = size - overlap
+                  i = 0
+                  while i < len(text):
+                      blocks.append(text[i:i + size])
+                      i += step
+              return {"blocks": blocks}
+        code_language: python3
+        desc: 切句分块：长直播稿切成 1000 字/块、重叠 80 字，单块上下文短 → 模型更准、token 更省
+        outputs:
+          blocks:
+            type: array[string]
+        selected: false
+        title: 切句分块
+        type: code
+        variables:
+        - value_selector:
+          - '1801000000001'
+          - transcript
+          value_type: string
+          variable: transcript
+      height: 168
+      id: '1801000000002'
+      position:
+        x: 300
+        y: 250
+      positionAbsolute:
+        x: 300
+        y: 250
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: 逐块分析直播内容
+        error_handle_mode: remove-abnormal-output
+        flatten_output: true
+        is_parallel: true
+        iterator_input_type: array[string]
+        iterator_selector:
+        - '1801000000002'
+        - blocks
+        output_selector:
+        - '1801000000005'
+        - item_result
+        output_type: array[object]
+        parallel_nums: 3
+        selected: false
+        startNodeType: iteration-start
+        start_node_id: '1801000000003start'
+        title: 迭代_逐块分析
+        type: iteration
+        width: 560
+      height: 240
+      id: '1801000000003'
+      position:
+        x: 620
+        y: 250
+      positionAbsolute:
+        x: 620
+        y: 250
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 560
+      zIndex: 1
+    - data:
+        desc: ''
+        isInIteration: true
+        selected: false
+        title: ''
+        type: iteration-start
+      draggable: false
+      height: 48
+      id: '1801000000003start'
+      parentId: '1801000000003'
+      position:
+        x: 24
+        y: 72
+      positionAbsolute:
+        x: 644
+        y: 322
+      selectable: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-iteration-start
+      width: 44
+      zIndex: 1002
+    - data:
+        context:
+          enabled: true
+          variable_selector:
+          - '1801000000003'
+          - item
+        desc: 抽取类+判定类合一：一段文本同时抽车系 + 打违规0-4分
+        isInIteration: true
+        isInLoop: false
+        iteration_id: '1801000000003'
+        model:
+          completion_params:
+            frequency_penalty: 0
+            max_tokens: 2048
+            presence_penalty: 0
+            temperature: 0
+          mode: chat
+          name: qwen2.5-max
+          provider: tongyi
+        prompt_template:
+        - id: sys-qc
+          role: system
+          text: |-
+            你是直播内容质检助手。读一段直播口播/转写文本，做两件事：
+            1) 抽取文本里明确提到的汽车车系（如 问界M5 / M7 / M9、智界R7、享界S9 等），只列确实提到的，不要臆测。
+            2) 判断该段是否存在违规表达，按 0–4 打分：
+               0 正常：无违规，中性或正向陈述。
+               1 轻微：轻微夸张但未触红线。
+               2 中度：明显极限词/过度承诺（如"绝对第一""全网最低"）。
+               3 严重：人身攻击、辱骂、脏话、地域/身份攻击。
+               4 阴阳怪气：反讽、明褒暗贬、引战带节奏，字面上无脏话但恶意明显。
+
+            只输出一个 JSON 对象，不要解释、不要代码块、不要 ```：
+            {"series": ["车系1","车系2"], "violation_score": <0到4整数>, "violation_reason": "<一句话依据>"}
+
+            示例：
+            文本：今天给大家看看问界M9，这车绝对是同级别第一，买到就是赚 → {"series":["问界M9"],"violation_score":2,"violation_reason":"使用绝对化极限词"}
+            文本：问界M7空间真大，家里人都满意 → {"series":["问界M7"],"violation_score":0,"violation_reason":"正常正向陈述"}
+            文本：这牌子就是垃圾，买的人都是傻子 → {"series":[],"violation_score":3,"violation_reason":"人身攻击"}
+        - id: user-qc
+          role: user
+          text: '文本：{{#1801000000003.item#}}'
+        selected: false
+        title: LLM_块分析
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      extent: parent
+      height: 116
+      id: '1801000000004'
+      parentId: '1801000000003'
+      position:
+        x: 181
+        y: 60
+      positionAbsolute:
+        x: 801
+        y: 310
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        code: |-
+          import json
+          import re
+
+
+          def _clean(t: str) -> str:
+              t = re.sub(r"<\s*think\s*>.*?<\s*/\s*think\s*>", "", t or "", flags=re.DOTALL)
+              t = re.sub(r"<\s*thinking\s*>.*?<\s*/\s*thinking\s*>", "", t or "", flags=re.DOTALL)
+              t = re.sub(r"```(?:json)?\s*", "", t, flags=re.IGNORECASE)
+              t = t.replace("```", "")
+              return t.strip()
+
+
+          def _extract_obj(text: str):
+              try:
+                  return json.loads(text)
+              except Exception:
+                  pass
+              s = text.find("{")
+              e = text.rfind("}")
+              if s != -1 and e > s:
+                  try:
+                      return json.loads(text[s:e + 1])
+                  except Exception:
+                      pass
+              m = re.search(r"\{[^{}]*\}", text, flags=re.DOTALL)
+              if m:
+                  try:
+                      return json.loads(m.group(0))
+                  except Exception:
+                      pass
+              return None
+
+
+          def main(llm_output: str) -> dict:
+              obj = _extract_obj(_clean(llm_output or ""))
+              if not isinstance(obj, dict):
+                  return {"item_result": {"series": [], "violation_score": -1, "violation_reason": "模型未返回可解析JSON"}}
+              raw_series = obj.get("series", [])
+              series = []
+              if isinstance(raw_series, list):
+                  for s in raw_series:
+                      s = str(s).strip()
+                      if s:
+                          series.append(s)
+              try:
+                  score = int(obj.get("violation_score", -1))
+              except Exception:
+                  score = -1
+              if score not in (0, 1, 2, 3, 4):
+                  score = -1
+              reason = str(obj.get("violation_reason", "")).strip()
+              return {"item_result": {"series": series, "violation_score": score, "violation_reason": reason, "is_violation": score >= 3}}
+        code_language: python3
+        desc: 解析层：剥think+抽最外层JSON+取series/score，包裹成item_result对象（确定性解析，不调LLM）
+        outputs:
+          item_result:
+            type: object
+        selected: false
+        title: 解析块结果
+        type: code
+        variables:
+        - value_selector:
+          - '1801000000004'
+          - text
+          value_type: string
+          variable: llm_output
+      extent: parent
+      height: 168
+      id: '1801000000005'
+      parentId: '1801000000003'
+      position:
+        x: 181
+        y: 320
+      positionAbsolute:
+        x: 801
+        y: 570
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+      zIndex: 1002
+    - data:
+        code: |-
+          # 确定性兜底：屏蔽词用正则/子串匹配，零 LLM 调用
+          # 演示用极限词表，实际部署替换为业务自有词表即可
+          KEYWORDS = ["绝对第一", "全网最低", "国家级", "最牛", "秒杀一切", "100%有效", "史上最强", "唯一指定"]
+
+
+          def main(transcript: str) -> dict:
+              text = transcript or ""
+              hits = []
+              for kw in KEYWORDS:
+                  if kw and kw in text:
+                      idx = text.find(kw)
+                      start = max(0, idx - 20)
+                      end = min(len(text), idx + len(kw) + 20)
+                      hits.append({"keyword": kw, "context": text[start:end]})
+              return {"hits": hits}
+        code_language: python3
+        desc: 屏蔽词过滤：子串匹配极限词，确定性执行（对比"让LLM判断违规"省一次LLM调用/块）
+        outputs:
+          hits:
+            type: array[object]
+        selected: false
+        title: 屏蔽词过滤
+        type: code
+        variables:
+        - value_selector:
+          - '1801000000001'
+          - transcript
+          value_type: string
+          variable: transcript
+      height: 168
+      id: '1801000000006'
+      position:
+        x: 1260
+        y: 250
+      positionAbsolute:
+        x: 1260
+        y: 250
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        code: |-
+          # 车系归一化词库：演示"代码确定性后处理"如何替代反复调LLM做去重/别名合并
+          NORM = {
+              "m5": "问界M5", "问界m5": "问界M5", "m7": "问界M7", "问界m7": "问界M7",
+              "m9": "问界M9", "问界m9": "问界M9", "r7": "智界R7", "s9": "享界S9",
+              "s7": "智界S7", "s9t": "享界S9T",
+          }
+
+
+          def main(results: list, hits: list) -> dict:
+              results = results or []
+              norm_series = {}
+              counts = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, -1: 0}
+              violations = []
+              for r in results:
+                  if not isinstance(r, dict):
+                      r = {}
+                  for s in (r.get("series", []) or []):
+                      key = str(s).strip().lower()
+                      name = NORM.get(key, str(s).strip())
+                      norm_series[name] = norm_series.get(name, 0) + 1
+                  try:
+                      sc = int(r.get("violation_score", -1))
+                  except Exception:
+                      sc = -1
+                  counts[sc] = counts.get(sc, 0) + 1
+                  if r.get("is_violation"):
+                      violations.append({"score": sc, "reason": r.get("violation_reason", "")})
+              series_list = sorted(norm_series.keys())
+              total = len(results)
+              report = (
+                  f"识别车系 {len(series_list)} 个：{', '.join(series_list)}；"
+                  f"共 {total} 段，违规 {len(violations)} 段；"
+                  + " ".join(f"{k}分={counts.get(k, 0)}" for k in (0, 1, 2, 3, 4))
+                  + f"；解析失败={counts.get(-1, 0)}；命中屏蔽词 {len(hits or [])} 处"
+              )
+              return {
+                  "report": report,
+                  "series_list": series_list,
+                  "series_count": len(series_list),
+                  "total": total,
+                  "counts": counts,
+                  "violations": violations,
+                  "keyword_hits": hits or [],
+              }
+        code_language: python3
+        desc: 合并对齐：车系归一化去重 + 违规分档计数 + 屏蔽词命中汇总，全部代码确定性完成
+        outputs:
+          report:
+            type: string
+          series_list:
+            type: array[string]
+          series_count:
+            type: number
+          total:
+            type: number
+          counts:
+            type: object
+          violations:
+            type: array[object]
+          keyword_hits:
+            type: array[object]
+        selected: false
+        title: 合并对齐
+        type: code
+        variables:
+        - value_selector:
+          - '1801000000003'
+          - output
+          value_type: array[object]
+          variable: results
+        - value_selector:
+          - '1801000000006'
+          - hits
+          value_type: array[object]
+          variable: hits
+      height: 200
+      id: '1801000000007'
+      position:
+        x: 1580
+        y: 250
+      positionAbsolute:
+        x: 1580
+        y: 250
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: 返回结构化质检报告
+        outputs:
+        - value_selector:
+          - '1801000000007'
+          - report
+          variable: report
+        - value_selector:
+          - '1801000000007'
+          - series_list
+          variable: series_list
+        - value_selector:
+          - '1801000000007'
+          - series_count
+          variable: series_count
+        - value_selector:
+          - '1801000000007'
+          - total
+          variable: total
+        - value_selector:
+          - '1801000000007'
+          - counts
+          variable: counts
+        - value_selector:
+          - '1801000000007'
+          - violations
+          variable: violations
+        - value_selector:
+          - '1801000000007'
+          - keyword_hits
+          variable: keyword_hits
+        selected: false
+        title: 结束
+        type: end
+      height: 200
+      id: '1801000000008'
+      position:
+        x: 1900
+        y: 270
+      positionAbsolute:
+        x: 1900
+        y: 270
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    viewport:
+      x: -120
+      y: 60
+      zoom: 0.75
